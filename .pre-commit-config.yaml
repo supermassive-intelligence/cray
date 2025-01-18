@@ -3,4 +3,7 @@ repos:
     rev: 24.10.0
     hooks:
       - id: black
+        files: \.py$
+        exclude: |
+          ^models/|^venv/
 
