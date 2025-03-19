@@ -29,16 +29,16 @@ class FSDPLayer(nn.Module):
     def shard_parameters(self):
         self.sharded_parameter_metadata = {}
 
-        logger.debug(f"Rank {rank}: Sharding parameters for {self.module}")
+        # logger.debug(f"Rank {rank}: Sharding parameters for {self.module}")
 
         for name, param in list(self.module.named_parameters(recurse=False)):
             shard, metadata_dict = shard_tensor(param)
 
             self.sharded_parameter_metadata[name] = metadata_dict
 
-            logger.debug(
-                f" Rank {rank}: Sharding parameter {name} with shape {param.shape} into {metadata_dict}, new shape {shard.shape}"
-            )
+            # logger.debug(
+            #    f" Rank {rank}: Sharding parameter {name} with shape {param.shape} into {metadata_dict}, new shape {shard.shape}"
+            #)
 
             setattr(
                 self.module,
@@ -48,9 +48,9 @@ class FSDPLayer(nn.Module):
             delattr(self.module, name)
             setattr(self.module, name, shard)
 
-        logger.debug(
-            f" Rank {rank}: Sharded parameters are {[i[0] for i in self.module.named_parameters(recurse=False)]}"
-        )
+        #logger.debug(
+        #    f" Rank {rank}: Sharded parameters are {[i[0] for i in self.module.named_parameters(recurse=False)]}"
+        #)
 
     def forward(self, *args, **kwargs):
         if self.should_checkpoint:
@@ -67,12 +67,12 @@ class FSDPLayer(nn.Module):
         return result
 
     def gather_all_parameters(self):
-        logger.debug(f"Rank {rank}: Gathering parameters for {self.module}")
+        #logger.debug(f"Rank {rank}: Gathering parameters for {self.module}")
 
         for name, param in self.module.named_parameters(recurse=False):
 
             if not name.startswith("shard_"):
-                logger.debug(f" Rank {rank}: Skipping parameter {name}")
+                #logger.debug(f" Rank {rank}: Skipping parameter {name}")
                 continue
 
             # Remove _shard_ prefix
@@ -84,9 +84,9 @@ class FSDPLayer(nn.Module):
             # Gather all shards and reconstruct the full tensor
             full_tensor = all_gather_op(param, metadata_dict)
 
-            logger.debug(
-                f" Rank {rank}: Gathered parameter {name} with shape {full_tensor.shape}"
-            )
+            #logger.debug(
+            #   f" Rank {rank}: Gathered parameter {name} with shape {full_tensor.shape}"
+            #)
 
             # Copy the full tensor back to the original parameter
             setattr(self.module, name, full_tensor)
@@ -95,7 +95,7 @@ class FSDPLayer(nn.Module):
         for name, param in self.module.named_parameters(recurse=False):
 
             if not name.startswith("shard_"):
-                logger.debug(f" Rank {rank}: Skipping parameter {name}")
+                #logger.debug(f" Rank {rank}: Skipping parameter {name}")
                 continue
 
             # Remove _shard_ prefix
@@ -120,7 +120,7 @@ class FSDPLayer(nn.Module):
         for name, param in self.module.named_parameters(recurse=False):
 
             if not name.startswith("shard_"):
-                logger.debug(f" Rank {rank}: Skipping parameter {name}")
+                #logger.debug(f" Rank {rank}: Skipping parameter {name}")
                 continue
 
             # Remove _shard_ prefix
@@ -196,7 +196,7 @@ def shard_tensor(tensor):
     # Split into equal shards
     shard_size = padded_numel // world_size
     start = rank * shard_size
-    shard = tensor_padded[start : start + shard_size].clone()
+    shard = tensor_padded[start : start + shard_size].clone().to(tensor.device)
 
     # Gather metadata from all ranks
     local_metadata = (original_numel, original_shape, shard_size, padding)
@@ -242,12 +242,19 @@ def trim_padding(all_tensors, rank, world_size, metadata_dict):
 def collectives_all_gather(shard, metadata_dict):
     """Gather shards and reconstruct the full tensor using metadata."""
     # Prepare buffers
-    shard_numpy = shard.detach().to(torch.float32).cpu().numpy().flatten()
-    gathered = np.empty(shard_numpy.size * world_size, dtype=shard_numpy.dtype)
+    gathered = torch.empty(shard.numel() * world_size, device=shard.device, dtype=shard.dtype).detach()
 
     # Collective operation
-    comm.Allgather(shard_numpy, gathered)
-
+    shard_detached = shard.detach().contiguous().to(shard.device)
+    start = time.time()
+    comm.Allgather(MPI.memory.frombuffer(shard_detached), MPI.memory.frombuffer(gathered))
+    end = time.time()
+    
+    total_time = "{:.1e}".format(end - start)
+    bandwidth = "{:.1e}".format(shard_detached.nbytes / (end - start) / 1e9)
+    logger.info(f"All_gather time on device {shard_detached.device}: {total_time}, bandwidth: {bandwidth} GB/s on tensor {shard_detached.shape}"
+        )
+    
     # Reconstruct the full tensor using metadata
     all_tensors = []
     offset = 0
@@ -261,15 +268,9 @@ def collectives_all_gather(shard, metadata_dict):
 
     all_tensors = trim_padding(all_tensors, rank, world_size, metadata_dict)
 
-    concatenated_numpy = np.concatenate(all_tensors)
-
+    concatenated = torch.cat(all_tensors)
     original_shape = metadata_dict[rank][1]
-    return (
-        torch.from_numpy(concatenated_numpy)
-        .to(shard.device)
-        .to(shard.dtype)
-        .reshape(original_shape)
-    )
+    return concatenated.reshape(original_shape)
 
 
 def collectives_reduce_scatter(tensor, metadata_dict):
@@ -278,24 +279,31 @@ def collectives_reduce_scatter(tensor, metadata_dict):
     original_numel, _, shard_size, padding = metadata_dict[rank]
 
     # Pad tensor if needed
-    tensor_padded = tensor.view(-1).clone()
+    tensor_padded = tensor.view(-1).clone().to(tensor.device)
     if padding > 0:
         tensor_padded = torch.cat(
             [tensor.view(-1), torch.zeros(padding, device=tensor.device)]
-        )
+        ).detach()
 
-    tensor_numpy = tensor_padded.detach().float().cpu().numpy()
-    local_shard = np.zeros(shard_size, dtype=tensor_numpy.dtype)
+    local_shard = torch.empty(shard_size, device=tensor.device, dtype=tensor.dtype).detach()
 
     # Collective operation
-    comm.Reduce_scatter(tensor_numpy, local_shard, op=MPI.SUM)
+    start = time.time()
+    comm.Reduce_scatter(MPI.memory.frombuffer(tensor_padded), MPI.memory.frombuffer(local_shard), op=MPI.SUM)
+    end = time.time()
+    
+    total_time = "{:.1e}".format(end - start)
+    bandwidth = "{:.1e}".format(tensor_padded.nbytes / (end - start) / 1e9)
+    logger.info(
+                f"Reduce_scatter time on device {tensor_padded.device}: {total_time}, bandwidth: {bandwidth} GB/s"
+            )
 
     # Trim padding on last rank using its original size from metadata_dict
     if rank == world_size - 1:
         valid_elements = original_numel - padding
         local_shard = local_shard[:valid_elements]
 
-    return torch.from_numpy(local_shard).to(tensor.device).to(tensor.dtype)
+    return local_shard
 
 
 class _AllGather(torch.autograd.Function):

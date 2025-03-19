@@ -159,7 +159,7 @@ def write_gres_config(cluster_info):
 
 
 def get_gpu_indexes():
-    # handle the case where the card is an arbtirary number
+    # handle the case where the card is an arbitrary number
     if torch.version.hip:
         prefix = "/dev/dri"
         card_name = "card"
@@ -171,10 +171,12 @@ def get_gpu_indexes():
 
     for file in os.listdir(prefix):
         if file.startswith(card_name):
-            print(file[len(card_name) :])
-            index_as_int = int(file[len(card_name) :])
+            index_str = file[len(card_name) :]
+            if index_str.isdigit():
+                print(file[len(card_name) :])
+                index_as_int = int(file[len(card_name) :])
 
-            indexes.append(index_as_int)
+                indexes.append(index_as_int)
 
     return indexes
 
