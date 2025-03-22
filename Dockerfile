@@ -23,6 +23,8 @@ RUN pip install uv
 RUN uv pip install torch==${TORCH_VERSION}
 RUN uv pip install xformers==0.0.27.post2
 
+RUN pip install cupy-cuda12x
+
 ENV BASE_NAME=nvidia
 
 ###############################################################################
@@ -57,6 +59,7 @@ ARG MAX_JOBS=8
 ENV BASE_NAME=amd
 
 RUN pip install amdsmi
+RUN pip install pyhip>=1.1.0
 
 ###############################################################################
 # VLLM BUILD STAGE
