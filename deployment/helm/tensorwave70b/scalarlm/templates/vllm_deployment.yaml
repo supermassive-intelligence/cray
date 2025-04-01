@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "scalarlm.fullname" . }}
+  name: {{ include "scalarlm.vllmname" . }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.inference_gpus }}
   selector:
     matchLabels:
-      {{- include "scalarlm.labels" . | nindent 6 }}
+      {{- include "scalarlm.vllmlabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "scalarlm.labels" . | nindent 8 }}
+        {{- include "scalarlm.vllmlabels" . | nindent 8 }}
     spec:
     {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -23,9 +23,7 @@ spec:
           command: ["/app/cray/scripts/start_one_server.sh"]
           ports:
             - name: http
-              containerPort: {{ .Values.service.api_port }}
-              hostPort: 8000
-              protocol: TCP
+              containerPort: 8001
           volumeMounts:
           {{- range .Values.volumes }}
             - name: {{ .name }}
@@ -40,19 +38,20 @@ spec:
               mountPath: /root/.cache/huggingface
           resources:
             limits:
-              amd.com/gpu: {{ .Values.training_gpus }}
+              amd.com/gpu: 1
       volumes:
         - name: scalarlm-jobs
           persistentVolumeClaim:
-            claimName: scalarlm-jobs
+            claimName: scalarlm-70b-jobs
         - name: scalarlm-cache
           persistentVolumeClaim:
-            claimName: scalarlm-cache
+            claimName: scalarlm-70b-cache
         - name: scalarlm-config
           configMap:
-            name: {{ .Release.Name }}-api-configmap
+            name: {{ .Release.Name }}-vllm-configmap
       {{- range .Values.volumes }}
         - name: {{ .name }}
           hostPath:
             path: {{ .hostPath }}
       {{- end }}
+

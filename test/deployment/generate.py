@@ -1,10 +1,10 @@
 import masint
 
-masint.api_url = "http://localhost:8000"
+# masint.api_url = "http://localhost:8000"
 # masint.api_url = "https://tensorwave.cray-lm.com"
+masint.api_url = "https://llama8btensorwave.cray-lm.com"
+# masint.api_url = "https://vultr.smasint.com"
 # masint.api_url = "https://meta-llama--llama-3-2-3b-instruct.cray-lm.com"
-# masint.api_url = "https://greg1232--cray-cpu-llama-3-2-1b-instruct-fastapi-app.modal.run"
-# masint.api_url = "https://greg1232--cray-nvidia-llama-3-2-3b-instruct-fastapi-app.modal.run"
 
 
 def get_dataset(count):
@@ -18,12 +18,13 @@ def get_dataset(count):
 
 llm = masint.SupermassiveIntelligence()
 
-dataset = get_dataset(count=10)
+dataset = get_dataset(count=1)
 
 results = llm.generate(
     prompts=dataset,
+    max_tokens=200,
     # generate with default model
-    # model_name="c7c3ed39e0005e0e73145d49510c94d7b5e4f6552cd35c4a7a8b37d0b41f318e"
+    # model_name="2560805ddf87f7a1340be14e4b3dd38f7289a43de79410b3ac09944438842bfd"
 )
 
 print(results)
