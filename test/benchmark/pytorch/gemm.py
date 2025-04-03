@@ -32,14 +32,17 @@ def run_gemm_benchmark():
 
 
 def warmup():
-    run_gemm(gemm_sizes[0])
+    run_gemm((256, 256, 2048))
+
+    global gemm_sizes
+    gemm_sizes = select_appropriate_size_for_this_machine()
 
 
 def run_gemm(size):
     m, n, k = size
-    a = torch.randn(m, k, dtype=torch.float16)
-    b = torch.randn(k, n, dtype=torch.float16)
-    c = torch.randn(m, n, dtype=torch.float16)
+    a = torch.randn(m, k, dtype=gemm_dtype, device=get_device())
+    b = torch.randn(k, n, dtype=gemm_dtype, device=get_device())
+    c = torch.randn(m, n, dtype=gemm_dtype, device=get_device())
 
     # run at least 1 second
     start_time = time.time()
@@ -57,6 +60,8 @@ def run_gemm(size):
         iterations += 1
     end.record()
 
+    iterations = max(1, iterations)
+
     barrier()
 
     seconds = start.elapsed_time(end) / 1000 / iterations
@@ -64,6 +69,10 @@ def run_gemm(size):
     return {
         "size": size,
         "time": seconds,
+        "flops": 2 * m * n * k,
+        "flop/s": 2 * m * n * k / seconds,
+        "bytes": (m * k + k * n + m * n) * 2,
+        "operational_intensity": 2 * m * n * k / ((m * k + k * n + m * n) * 2),
         "GFLOP/s": 2 * m * n * k / seconds / 1e9,
     }
 
@@ -93,12 +102,18 @@ def barrier():
         pass
 
 
+def get_device():
+    if torch.cuda.is_available():
+        return torch.device("cuda:0")
+    else:
+        return torch.device("cpu")
+
+
 def select_appropriate_size_for_this_machine():
     # Try a small GEMM, and time it
     # If it runs too fast, select a bigger model
     # If it runs too slow, select a smaller model
-
-    tiny_gemm = (256, 256, 256)
+    tiny_gemm = (256, 256, 2048)
 
     metrics = run_gemm(tiny_gemm)
 
@@ -109,6 +124,8 @@ def select_appropriate_size_for_this_machine():
         return 2 * m * n * k
 
     tiny_flops = get_flops(tiny_gemm)
+
+    logger.info(f"Tiny GEMM took {metrics['time']} seconds it ran at {metrics['GFLOP/s']} GFLOP/s")
 
     # get the flops for each llama model
     llama_100m_flops = sum([get_flops(size) for size in llama_100m_sizes])
@@ -123,13 +140,17 @@ def select_appropriate_size_for_this_machine():
     llama_1b_time = llama_1b_flops / tiny_flops * tiny_time
     llama_8b_time = llama_8b_flops / tiny_flops * tiny_time
 
-    # Select the smallest model that will take at most 10 seconds to run
-    if llama_100m_time < 10:
-        return llama_100m_sizes
+    logger.info(f"GEMM from llama_100m will take {llama_100m_time} seconds")
+    logger.info(f"GEMM from llama_1b will take {llama_1b_time} seconds")
+    logger.info(f"GEMM from llama_8b will take {llama_8b_time} seconds")
+
+    # Select the largest model that will take at most 10 seconds to run
+    if llama_8b_time < 10:
+        return llama_8b_sizes
     elif llama_1b_time < 10:
         return llama_1b_sizes
-    elif llama_8b_time < 10:
-        return llama_8b_sizes
+    elif llama_100m_time < 10:
+        return llama_100m_sizes
     else:
         return [tiny_gemm]
 
@@ -140,6 +161,7 @@ def save_results(results):
 
     with open(path, "w") as f:
         json.dump(results, f)
+
 
 # Common sizes used in LLMs
 
@@ -162,8 +184,9 @@ llama_8b_sizes = [
     (2048, 4096, 14336),
 ]
 
-gemm_sizes = select_appropriate_size_for_this_machine()
+gemm_dtype = torch.bfloat16
 
+gemm_sizes = None
 
 if __name__ == "__main__":
     main()

@@ -1,10 +1,13 @@
 inspect_args
 
-./cray build-image
+target=${args[target]}
+visible_gpus=${args[visible-gpus]}
+
+./cray build-image $target
 
 declare -a benchmark_command_parts
 benchmark_command_parts=(
-      "python" "/app/cray/test/benchmark/main.py"
+      "CUDA_VISIBLE_DEVICES=${visible_gpus}" "python" "/app/cray/test/benchmark/main.py"
 )
 
 benchmark_command="${benchmark_command_parts[*]}"
@@ -24,6 +27,18 @@ mkdir -p $ROOT_DIRECTORY/data
 
 docker_command_parts=("docker" "run" "--rm" "--network" "host" "-v" "$ROOT_DIRECTORY/data:/app/cray/data")
 
+declare -a gpu_options
+
+# Set the GPU options depending on the target
+if [ "$target" == "cpu" ]; then
+    gpu_options+=()
+elif [ "$target" == "amd" ]; then
+    gpu_options+=("--device" "/dev/kfd" "--device" "/dev/dri")
+else
+    gpu_options+=("--gpus" "all")
+fi
+
+docker_command_parts+=("${gpu_options[@]}")
 docker_command_parts+=("cray:latest" "sh" "-c" "'$benchmark_command'")
 
 docker_command="${docker_command_parts[*]}"
