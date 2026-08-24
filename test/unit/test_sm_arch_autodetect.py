@@ -13,6 +13,8 @@ These tests extract the actual assignment line out of the cmd/*.sh sources
 fails the test.
 """
 
+from __future__ import annotations
+
 import re
 import subprocess
 from pathlib import Path
