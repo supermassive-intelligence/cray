@@ -186,6 +186,17 @@ WORKDIR ${INSTALL_ROOT}
 # MAIN IMAGE
 FROM vllm AS infra
 
+# ARG scope ends with the stage that declares it, so INSTALL_ROOT has to be
+# re-declared here even though the parent stage sets the same value. Without
+# it every ${INSTALL_ROOT} below expands to the empty string: the gpu_aware_mpi
+# sources land at /infra/... while WORKDIR stays /app/cray (so the extension
+# build cannot find its .cpp files), and PYTHONPATH points at /infra, /sdk,
+# /ml, /test, /vllm instead of the real trees.
+#
+# Docker/BuildKit happens to tolerate the missing declaration; Buildah does
+# not, so the image only failed to build under podman.
+ARG INSTALL_ROOT=/app/cray
+
 # Build GPU-aware MPI
 COPY ./infra/cray_infra/training/gpu_aware_mpi ${INSTALL_ROOT}/infra/cray_infra/training/gpu_aware_mpi
 RUN python3 ${INSTALL_ROOT}/infra/cray_infra/training/gpu_aware_mpi/setup.py bdist_wheel --dist-dir=dist && \
