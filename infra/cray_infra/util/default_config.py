@@ -80,6 +80,24 @@ class Config(BaseModel):
     inference_work_queue_path: str = "/app/cray/inference_work_queue.sqlite"
     upload_base_path: str = "/app/cray/inference_requests"
 
+    # Fraction of *device* memory vLLM may claim, most of it for the KV cache.
+    #
+    # On unified-memory hosts (NVIDIA GB10 / DGX Spark, GH200, Jetson) the GPU
+    # has no separate VRAM: "device memory" is system RAM. vLLM sizes the KV
+    # cache as gpu_memory_utilization x total_memory and has no clamp or
+    # warning for integrated GPUs, so a high value here starves the OS rather
+    # than merely filling a card. Observed on a 121 GiB GB10: vLLM's own
+    # default of 0.92 asks for ~112 GiB and wedges the host -- it stops
+    # scheduling sshd while still completing TCP handshakes, so the box looks
+    # up but is unreachable. Ours stayed that way for roughly two hours and
+    # then recovered without a reboot, but the vLLM server under test never
+    # started ("Server failed to start in time").
+    #
+    # 0.40 predates that finding (it came in with the Gemma config work) and
+    # is documented here rather than changed, because it is comfortably inside
+    # the safe range on the hosts we run. Raise it only with headroom for the
+    # host, and only after checking whether the target GPU is integrated
+    # (torch.cuda.get_device_properties(0).is_integrated).
     gpu_memory_utilization: float = 0.40
     max_model_length: int = 0  # 0 = no cap; resolved dynamically from vLLM at runtime
     default_max_output_tokens: int = 128
